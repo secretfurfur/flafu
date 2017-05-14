@@ -1,37 +1,37 @@
 package main
 
 import (
-    "encoding/json"
-    "math/rand"
-    "net/http"
-    "sync"
-    "time"
-    "github.com/gin-gonic/gin"
+	"encoding/json"
+	"github.com/gin-gonic/gin"
+	"math/rand"
+	"net/http"
+	"sync"
+	"time"
 )
 
 type Card struct {
-  Id 					int 	`json: id`
-  Name 					string	`json: name`
-  Rarity 				int 	`json: rarity`
-  Monster_points		int		`json: monster_points`
-  Jp_only				bool	`json: jp_only`
+	Id             int    `json: id`
+	Name           string `json: name`
+	Rarity         int    `json: rarity`
+	Monster_points int    `json: monster_points`
+	Jp_only        bool   `json: jp_only`
 }
 
 type Box struct {
-  	sync.RWMutex
-  	Cards *[]Card
-  	Size int
+	sync.RWMutex
+	Cards *[]Card
+	Size  int
 }
 
 type User struct {
-  Name 	string
-  Box Box
+	Name string
+	Box  Box
 }
 
 const userParam string = "user"
 
 var cards []Card = getCards()
-var users = struct{
+var users = struct {
 	sync.RWMutex
 	m map[string]User
 }{m: make(map[string]User)}
@@ -49,72 +49,72 @@ func main() {
 
 func scam(ctx *gin.Context) {
 	user := ctx.Query(userParam)
-	if (user == "") {
-		ctx.String(400, "Invalid user.")
+	if user == "" {
+		ctx.String(200, "Invalid user.")
 		return
 	}
 	users.RLock()
 	_, userExists := users.m[user]
 	users.RUnlock()
-	if (userExists) {
-		ctx.String(400, user + " has already been scammed.")
+	if userExists {
+		ctx.String(200, user+" has already been scammed.")
 		return
 	}
 	users.Lock()
 	users.m[user] = User{user, Box{Cards: &[]Card{cards[0]}, Size: 1}}
 	users.Unlock()
-	ctx.String(200, user + " has been successfully scammed.")
+	ctx.String(200, user+" has been successfully scammed.")
 }
 
 func roll(ctx *gin.Context) {
-  	user := ctx.Query(userParam)
-  	if (user == "") {
-  		ctx.String(400, "Invalid user.")
-  		return
-  	}
-  	users.RLock()
+	user := ctx.Query(userParam)
+	if user == "" {
+		ctx.String(200, "Invalid user.")
+		return
+	}
+	users.RLock()
 	userInfo, userExists := users.m[user]
 	users.RUnlock()
-	if (!userExists) {
-		ctx.String(400, user + " has not been scammed yet.")
-  		return
+	if !userExists {
+		ctx.String(200, user+" has not been scammed yet.")
+		return
 	}
 	// if (len(*userInfo.Box.Cards) > userInfo.Box.Size) {
-	// 	ctx.String(400, user + "'s box space is full.")
+	// 	ctx.String(200, user + "'s box space is full.")
 	// 	return
 	// }
-  	var roll Card = cards[rand.Intn(len(cards))]
-  	var resp = getEggTier(roll) + " " + roll.Name
-  	userInfo.Box.Lock()
-  	*userInfo.Box.Cards = append((*userInfo.Box.Cards)[0:1], roll)
-  	userInfo.Box.Unlock()
-  	ctx.String(200, resp)
+	var roll Card = cards[rand.Intn(len(cards))]
+	var resp = user + "'s roll: " + getEggTier(roll) + " " + roll.Name
+	userInfo.Box.Lock()
+	*userInfo.Box.Cards = append((*userInfo.Box.Cards)[0:1], roll)
+	userInfo.Box.Unlock()
+	ctx.String(200, resp)
 }
 
 func status(ctx *gin.Context) {
 	user := ctx.Query(userParam)
-  	if (user == "") {
-  		ctx.String(400, "Invalid user.")
-  		return
-  	}
-  	users.RLock()
+	if user == "" {
+		ctx.String(200, "Invalid user.")
+		return
+	}
+	users.RLock()
 	userInfo, userExists := users.m[user]
 	users.RUnlock()
-	if (!userExists) {
-		ctx.String(400, user + " has not been scammed yet.")
-  		return
+	if !userExists {
+		ctx.String(200, user+" has not been scammed yet.")
+		return
 	}
 	userInfo.Box.RLock()
 	var resp = user + "'s box: ["
 	for i, card := range *userInfo.Box.Cards {
-		if (i == 0) {
+		if i == 0 {
 			resp = resp + card.Name + " (leader)"
-		} else if (i == userInfo.Box.Size) {
+		} else if i == userInfo.Box.Size {
 			resp = resp + card.Name + " (overflow)"
 		} else {
 			resp = resp + card.Name
 		}
-		if (i < len(*userInfo.Box.Cards) - 1) {
+		if i < len(*userInfo.Box.Cards)-1 {
 			resp = resp + ", "
 		}
 	}
@@ -124,22 +124,22 @@ func status(ctx *gin.Context) {
 }
 
 func keep(ctx *gin.Context) {
-    user := ctx.Query(userParam)
-  	if (user == "") {
-  		ctx.String(400, "Invalid user.")
-  		return
-  	}
-  	users.RLock()
+	user := ctx.Query(userParam)
+	if user == "" {
+		ctx.String(200, "Invalid user.")
+		return
+	}
+	users.RLock()
 	userInfo, userExists := users.m[user]
 	users.RUnlock()
-	if (!userExists) {
-		ctx.String(400, user + " has not been scammed yet.")
-  		return
+	if !userExists {
+		ctx.String(200, user+" has not been scammed yet.")
+		return
 	}
 	userInfo.Box.Lock()
-	if (len(*userInfo.Box.Cards) < 2) {
+	if len(*userInfo.Box.Cards) < 2 {
 		userInfo.Box.Unlock()
-		ctx.String(400, user + " does not have a new card to keep.")
+		ctx.String(200, user+" does not have a new card to keep.")
 		return
 	}
 	(*userInfo.Box.Cards)[0] = (*userInfo.Box.Cards)[1]
@@ -151,16 +151,16 @@ func keep(ctx *gin.Context) {
 
 func getCards() (ret []Card) {
 	resp, err := http.Get("https://www.padherder.com/api/monsters/")
-	if (err != nil) {
+	if err != nil {
 		panic(err.Error())
 	}
-	
+
 	defer resp.Body.Close()
-	
+
 	decoder := json.NewDecoder(resp.Body)
-    var allCards []Card
-    err = decoder.Decode(&allCards)
-	if (err != nil) {
+	var allCards []Card
+	err = decoder.Decode(&allCards)
+	if err != nil {
 		panic(err.Error())
 	}
 
@@ -169,7 +169,7 @@ func getCards() (ret []Card) {
 
 func filterCards(cards []Card) (ret []Card) {
 	for _, card := range cards {
-		if (!card.Jp_only) {
+		if !card.Jp_only {
 			ret = append(ret, card)
 		}
 	}
@@ -177,13 +177,13 @@ func filterCards(cards []Card) (ret []Card) {
 }
 
 func getEggTier(card Card) string {
-	if (card.Monster_points >= 50000 || card.Rarity > 8) {
+	if card.Monster_points >= 50000 || card.Rarity > 8 {
 		return "DIAMOND EGG!!!"
 	}
-	if (card.Rarity > 6) {
+	if card.Rarity > 6 {
 		return "GOLD EGG!!"
 	}
-	if (card.Rarity > 4) {
+	if card.Rarity > 4 {
 		return "SILVER EGG!"
 	}
 	return "BRONZE EGG"

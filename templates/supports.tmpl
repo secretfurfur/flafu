@@ -1,0 +1,8 @@
+<table>
+{{range $key, $value := .Supports}}
+  	<tr>
+  		<th>{{$key}}</th>
+  		<th><img width="60" src="http://puzzledragonx.com/en/img/book/{{$value.Leader.Id}}.png"/></th>
+  	</tr>
+{{end}}
+</table>

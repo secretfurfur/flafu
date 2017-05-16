@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"math/rand"
 	"net/http"
@@ -28,6 +29,28 @@ type User struct {
 	Box  Box
 }
 
+type SupporterUi struct {
+	Name   string
+	Leader Card
+}
+
+type Supporter struct {
+	User User
+	Ttl  int
+}
+
+func (s Supporter) expired() bool {
+	return s.Ttl <= 0
+}
+
+func (s *Supporter) tick() {
+	s.Ttl = s.Ttl - 1
+}
+
+func (s Supporter) toUi() SupporterUi {
+	return SupporterUi{s.User.Name, (*s.User.Box.Cards)[0]}
+}
+
 const userParam string = "user"
 
 var cards []Card = getCards()
@@ -36,15 +59,83 @@ var users = struct {
 	m map[string]User
 }{m: make(map[string]User)}
 
+var supporters = struct {
+	sync.RWMutex
+	m map[string]*Supporter
+}{m: make(map[string]*Supporter)}
+
 func main() {
 	rand.Seed(time.Now().Unix())
+	fmt.Println("Starting server")
 
 	r := gin.Default()
+	r.LoadHTMLGlob("templates/*")
+	r.Static("/css", "./css")
+
+	// External commands
 	r.GET("/roll", roll)
 	r.GET("/scam", scam)
 	r.GET("/status", status)
 	r.GET("/keep", keep)
+	r.GET("/support", support)
+
+	// Internal commands
+	r.GET("/supports", supports)
+
+	// Views
+	r.GET("/index", index)
+
 	r.Run() // listen and serve on 0.0.0.0:8080
+}
+
+func index(ctx *gin.Context) {
+	ctx.HTML(200, "index.tmpl", nil)
+}
+
+func supports(ctx *gin.Context) {
+	supporters.RLock()
+	var u = make(map[string]SupporterUi)
+	for user, support := range supporters.m {
+		support.tick()
+		if support.expired() {
+			delete(supporters.m, user)
+		} else {
+			u[user] = support.toUi()
+		}
+	}
+	ctx.HTML(200, "supports.tmpl", gin.H{"Supports": u})
+	supporters.RUnlock()
+}
+
+func support(ctx *gin.Context) {
+	user := ctx.Query(userParam)
+	if user == "" {
+		ctx.String(200, "Invalid user.")
+		return
+	}
+	users.RLock()
+	userInfo, userExists := users.m[user]
+	users.RUnlock()
+	if !userExists {
+		ctx.String(200, user+" has not been scammed yet.")
+		return
+	}
+	supporters.RLock()
+	_, alreadySupporting := supporters.m[user]
+	num := len(supporters.m)
+	supporters.RUnlock()
+	if alreadySupporting {
+		ctx.String(200, user+" is already supporting.")
+		return
+	}
+	if num >= 1 {
+		ctx.String(200, "Sweetily has too many supporters right now!")
+		return
+	}
+	supporters.Lock()
+	supporters.m[user] = &Supporter{userInfo, 12}
+	supporters.Unlock()
+	ctx.String(200, user+" is now supporting Sweetily with "+(*userInfo.Box.Cards)[0].Name+"!")
 }
 
 func scam(ctx *gin.Context) {

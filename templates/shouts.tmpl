@@ -18,9 +18,9 @@
     	var audio = new Audio('assets/alert.mp3');
 		audio.play();
 		var utterance = new window.SpeechSynthesisUtterance();
-		utterance.lang = 'en';
+		utterance.lang = 'ja-JP';
 		utterance.volume = 1.0;
-		utterance.rate = 0.8;
+		utterance.rate = 1.1;
 		utterance.pitch = 1.0;
 		utterance.text = {{ .Shout.Message }};
 		setTimeout(function() {

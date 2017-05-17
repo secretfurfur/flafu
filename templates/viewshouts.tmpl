@@ -9,7 +9,17 @@
 </html>
 
 <script type="text/javascript">
+    var voice = null;
     $(document).ready(function(){
+      window.speechSynthesis.getVoices()
+      window.speechSynthesis.onvoiceschanged = function() {
+        voices = window.speechSynthesis.getVoices();
+        for (i=0; i<voices.length; i++) {
+          if (voices[i].name.startsWith("Google US English")) {
+            voice = voices[i]
+          }
+        }
+      };
       refresh();
     });
 

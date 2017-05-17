@@ -45,9 +45,9 @@ div.table-title {
 th {
   color:#FFAAFF;;
   background:#1b1e24;
-  border-bottom:4px solid #9ea7af;
-  border-right: 1px solid #343a45;
-  font-size:23px;
+  border-bottom:4px solid #FFAAFF;
+  border-right: 1px solid #FFAAFF;
+  font-size:27px;
   font-weight: 100;
   padding:10px;
   text-align:left;
@@ -65,8 +65,8 @@ th:last-child {
 }
   
 tr {
-  border-top: 1px solid #C1C3D1;
-  border-bottom-: 1px solid #C1C3D1;
+  border-top: 1px solid #FFAAFF;
+  border-bottom-: 1px solid #FFAAFF;
   color:#666B85;
   font-size:16px;
   font-weight:normal;

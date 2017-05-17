@@ -29,6 +29,12 @@ type User struct {
 	Box  Box
 }
 
+type ShouterUi struct {
+	Name string
+	Leader Card
+	Message string
+}
+
 type SupporterUi struct {
 	Name   string
 	Leader Card
@@ -52,6 +58,7 @@ func (s Supporter) toUi() SupporterUi {
 }
 
 const userParam string = "user"
+const messageParam string = "message"
 
 var cards []Card = getCards()
 var users = struct {
@@ -64,6 +71,8 @@ var supporters = struct {
 	m map[string]*Supporter
 }{m: make(map[string]*Supporter)}
 
+var shouters = make(chan ShouterUi, 100)
+
 func main() {
 	rand.Seed(time.Now().Unix())
 	fmt.Println("Starting server")
@@ -71,6 +80,7 @@ func main() {
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 	r.Static("/css", "./css")
+	r.Static("/assets", "./assets")
 
 	// External commands
 	r.GET("/roll", roll)
@@ -78,18 +88,57 @@ func main() {
 	r.GET("/status", status)
 	r.GET("/keep", keep)
 	r.GET("/support", support)
+	r.GET("/shout", shout)
 
 	// Internal commands
 	r.GET("/supports", supports)
+	r.GET("/shouts", shouts)
 
 	// Views
-	r.GET("/index", index)
+	r.GET("/viewsupports", viewSupports)
+	r.GET("/viewshouts", viewShouts)
 
 	r.Run() // listen and serve on 0.0.0.0:8080
 }
 
-func index(ctx *gin.Context) {
-	ctx.HTML(200, "index.tmpl", nil)
+func viewSupports(ctx *gin.Context) {
+	ctx.HTML(200, "viewsupports.tmpl", nil)
+}
+
+func viewShouts(ctx *gin.Context) {
+	ctx.HTML(200, "viewshouts.tmpl", nil)
+}
+
+func shouts(ctx *gin.Context) {
+	if len(shouters) == 0 {
+		ctx.Status(200)
+		return
+	}
+	s := <-shouters
+	ctx.HTML(200, "shouts.tmpl", gin.H{"Shout":s})
+}
+
+func shout(ctx *gin.Context) {
+	user := ctx.Query(userParam)
+	message := ctx.Query(messageParam)
+	if user == "" {
+		ctx.String(200, "Invalid user.")
+		return
+	}
+	users.RLock()
+	userInfo, userExists := users.m[user]
+	users.RUnlock()
+	if !userExists {
+		ctx.String(200, user+" has not been scammed yet.")
+		return
+	}
+	if len(message) > 100 {
+		ctx.String(200, user+" your message cannot be longer than 100 characters.")
+		return
+	}
+	var shout = ShouterUi{userInfo.Name, (*userInfo.Box.Cards)[0], message}
+	shouters <- shout
+	ctx.String(200, user+"'s message has been queued.")
 }
 
 func supports(ctx *gin.Context) {
@@ -268,13 +317,13 @@ func filterCards(cards []Card) (ret []Card) {
 }
 
 func getEggTier(card Card) string {
-	if card.Monster_points >= 50000 || card.Rarity > 8 {
+	if card.Monster_points >= 15000 || card.Rarity > 8 {
 		return "DIAMOND EGG!!!"
 	}
-	if card.Rarity > 6 {
+	if card.Monster_points >= 5000 || card.Rarity > 6 {
 		return "GOLD EGG!!"
 	}
-	if card.Rarity > 4 {
+	if card.Monster_points >= 3000 || card.Rarity > 4 {
 		return "SILVER EGG!"
 	}
 	return "BRONZE EGG"

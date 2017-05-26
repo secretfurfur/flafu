@@ -1,11 +1,15 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	_ "github.com/lib/pq"
 	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -18,10 +22,15 @@ type Card struct {
 	Jp_only        bool   `json: jp_only`
 }
 
+type UserCard struct {
+	Key int
+	Id  int
+}
+
 type Box struct {
 	sync.RWMutex
-	Cards *[]Card
-	Size  int
+	UserCards *[]UserCard
+	Size      int
 }
 
 type User struct {
@@ -30,14 +39,14 @@ type User struct {
 }
 
 type ShouterUi struct {
-	Name string
-	Leader Card
+	Name    string
+	Leader  UserCard
 	Message string
 }
 
 type SupporterUi struct {
 	Name   string
-	Leader Card
+	Leader UserCard
 }
 
 type Supporter struct {
@@ -54,13 +63,27 @@ func (s *Supporter) tick() {
 }
 
 func (s Supporter) toUi() SupporterUi {
-	return SupporterUi{s.User.Name, (*s.User.Box.Cards)[0]}
+	return SupporterUi{s.User.Name, (*s.User.Box.UserCards)[0]}
 }
+
+// SQL
+const createUsers string = `
+	CREATE TABLE IF NOT EXISTS Users(
+		name TEXT PRIMARY KEY NOT NULL,
+		cards INTEGER[] NOT NULL
+	)`
+const createUserCards string = `
+	CREATE TABLE IF NOT EXISTS UserCards(
+		key SERIAL PRIMARY KEY NOT NULL,
+		id INT NOT NULL
+	)`
+const selectUsers string = `SELECT * FROM Users`
 
 const userParam string = "user"
 const messageParam string = "message"
 
-var cards []Card = getCards()
+var validIds []int = []int{}
+var cards map[int]Card = getCards()
 var users = struct {
 	sync.RWMutex
 	m map[string]User
@@ -73,9 +96,60 @@ var supporters = struct {
 
 var shouters = make(chan ShouterUi, 100)
 
+func bootstrapDB() {
+	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL")+"?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = db.Query(createUsers)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Query(createUserCards)
+	if err != nil {
+		panic(err)
+	}
+
+	rows, err2 := db.Query(selectUsers)
+	if err2 != nil {
+		panic(err2)
+	}
+	type row struct {
+		name  string
+		cards []int
+	}
+	for rows.Next() {
+		var next row
+		err = rows.Scan(&next.name, &next.cards)
+		if err != nil {
+			panic(err)
+		}
+		var userCards []UserCard = []UserCard{}
+		for i := range next.cards {
+			res, err3 := db.Query("SELECT * from UserCards where key =" + strconv.Itoa(i))
+			if err3 != nil {
+				panic(err3)
+			}
+			for rows.Next() {
+				var userCard UserCard
+				err = res.Scan(&userCard.Key, &userCard.Id)
+				if err != nil {
+					panic(err)
+				}
+				userCards = append(userCards, userCard)
+			}
+		}
+		var user User = User{Name: next.name, Box: Box{UserCards: &userCards, Size: len(userCards)}}
+		users.m[user.Name] = user
+	}
+}
+
 func main() {
 	rand.Seed(time.Now().Unix())
 	fmt.Println("Starting server")
+
+	bootstrapDB()
 
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
@@ -115,7 +189,7 @@ func shouts(ctx *gin.Context) {
 		return
 	}
 	s := <-shouters
-	ctx.HTML(200, "shouts.tmpl", gin.H{"Shout":s})
+	ctx.HTML(200, "shouts.tmpl", gin.H{"Shout": s})
 }
 
 func shout(ctx *gin.Context) {
@@ -136,7 +210,7 @@ func shout(ctx *gin.Context) {
 		ctx.String(200, user+" your message cannot be longer than 100 characters.")
 		return
 	}
-	var shout = ShouterUi{userInfo.Name, (*userInfo.Box.Cards)[0], message}
+	var shout = ShouterUi{userInfo.Name, (*userInfo.Box.UserCards)[0], message}
 	shouters <- shout
 	ctx.String(200, user+"'s message has been queued.")
 }
@@ -184,7 +258,7 @@ func support(ctx *gin.Context) {
 	supporters.Lock()
 	supporters.m[user] = &Supporter{userInfo, 12}
 	supporters.Unlock()
-	ctx.String(200, user+" is now supporting Sweetily with "+(*userInfo.Box.Cards)[0].Name+"!")
+	ctx.String(200, user+" is now supporting Sweetily with "+cards[(*userInfo.Box.UserCards)[0].Id].Name+"!")
 }
 
 func scam(ctx *gin.Context) {
@@ -201,7 +275,7 @@ func scam(ctx *gin.Context) {
 		return
 	}
 	users.Lock()
-	users.m[user] = User{user, Box{Cards: &[]Card{cards[0]}, Size: 1}}
+	users.m[user] = User{user, Box{UserCards: &[]UserCard{UserCard{Key: 1, Id: 1}}, Size: 1}}
 	users.Unlock()
 	ctx.String(200, user+" has been successfully scammed.")
 }
@@ -223,10 +297,11 @@ func roll(ctx *gin.Context) {
 	// 	ctx.String(200, user + "'s box space is full.")
 	// 	return
 	// }
-	var roll Card = cards[rand.Intn(len(cards))]
+	var roll Card = cards[validIds[rand.Intn(len(validIds))]]
 	var resp = user + "'s roll: " + getEggTier(roll) + " " + roll.Name
+	var newCard UserCard = UserCard{Key: rand.Intn(10000), Id: roll.Id}
 	userInfo.Box.Lock()
-	*userInfo.Box.Cards = append((*userInfo.Box.Cards)[0:1], roll)
+	*userInfo.Box.UserCards = append((*userInfo.Box.UserCards)[0:1], newCard)
 	userInfo.Box.Unlock()
 	ctx.String(200, resp)
 }
@@ -246,15 +321,15 @@ func status(ctx *gin.Context) {
 	}
 	userInfo.Box.RLock()
 	var resp = user + "'s box: ["
-	for i, card := range *userInfo.Box.Cards {
+	for i, card := range *userInfo.Box.UserCards {
 		if i == 0 {
-			resp = resp + card.Name + " (leader)"
+			resp = resp + cards[card.Id].Name + " (leader)"
 		} else if i == userInfo.Box.Size {
-			resp = resp + card.Name + " (overflow)"
+			resp = resp + cards[card.Id].Name + " (overflow)"
 		} else {
-			resp = resp + card.Name
+			resp = resp + cards[card.Id].Name
 		}
-		if i < len(*userInfo.Box.Cards)-1 {
+		if i < len(*userInfo.Box.UserCards)-1 {
 			resp = resp + ", "
 		}
 	}
@@ -277,19 +352,19 @@ func keep(ctx *gin.Context) {
 		return
 	}
 	userInfo.Box.Lock()
-	if len(*userInfo.Box.Cards) < 2 {
+	if len(*userInfo.Box.UserCards) < 2 {
 		userInfo.Box.Unlock()
 		ctx.String(200, user+" does not have a new card to keep.")
 		return
 	}
-	(*userInfo.Box.Cards)[0] = (*userInfo.Box.Cards)[1]
-	*userInfo.Box.Cards = (*userInfo.Box.Cards)[:1]
-	var resp = user + "'s new leader is: " + (*userInfo.Box.Cards)[0].Name
+	(*userInfo.Box.UserCards)[0] = (*userInfo.Box.UserCards)[1]
+	*userInfo.Box.UserCards = (*userInfo.Box.UserCards)[:1]
+	var resp = user + "'s new leader is: " + cards[(*userInfo.Box.UserCards)[0].Id].Name
 	userInfo.Box.Unlock()
 	ctx.String(200, resp)
 }
 
-func getCards() (ret []Card) {
+func getCards() map[int]Card {
 	resp, err := http.Get("https://www.padherder.com/api/monsters/")
 	if err != nil {
 		panic(err.Error())
@@ -304,7 +379,12 @@ func getCards() (ret []Card) {
 		panic(err.Error())
 	}
 
-	return filterCards(allCards)
+	ret := make(map[int]Card)
+	for _, card := range filterCards(allCards) {
+		ret[card.Id] = card
+		validIds = append(validIds, card.Id)
+	}
+	return ret
 }
 
 func filterCards(cards []Card) (ret []Card) {

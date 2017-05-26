@@ -70,7 +70,7 @@ func (s Supporter) toUi() SupporterUi {
 const createUsers string = `
 	CREATE TABLE IF NOT EXISTS Users(
 		name TEXT PRIMARY KEY NOT NULL,
-		cards INTEGER[] NOT NULL
+		cards INT NOT NULL
 	)`
 const createUserCards string = `
 	CREATE TABLE IF NOT EXISTS UserCards(
@@ -78,6 +78,10 @@ const createUserCards string = `
 		id INT NOT NULL
 	)`
 const selectUsers string = `SELECT * FROM Users`
+const insertUserCard string = `INSERT INTO UserCards (id) VALUES ($1) RETURNING key`
+const deleteUserCard string = `DELETE FROM UserCards Where key = $1`
+const insertUser string = `INSERT INTO Users (name, cards) VALUES ($1, $2)`
+const updateUser string = `UPDATE Users SET (cards) = ($1) WHERE name = $2`
 
 const userParam string = "user"
 const messageParam string = "message"
@@ -96,8 +100,11 @@ var supporters = struct {
 
 var shouters = make(chan ShouterUi, 100)
 
+var db *sql.DB
+
 func bootstrapDB() {
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL")+"?sslmode=disable")
+	var err error
+	db, err = sql.Open("postgres", os.Getenv("DATABASE_URL")+"?sslmode=disable")
 	if err != nil {
 		panic(err)
 	}
@@ -121,17 +128,19 @@ func bootstrapDB() {
 	}
 	for rows.Next() {
 		var next row
-		err = rows.Scan(&next.name, &next.cards)
+		var leaderid int
+		err = rows.Scan(&next.name, &leaderid)
+		next.cards = []int{leaderid}
 		if err != nil {
 			panic(err)
 		}
 		var userCards []UserCard = []UserCard{}
-		for i := range next.cards {
-			res, err3 := db.Query("SELECT * from UserCards where key =" + strconv.Itoa(i))
+		for _, id := range next.cards {
+			res, err3 := db.Query("SELECT * from UserCards where key =" + strconv.Itoa(id))
 			if err3 != nil {
 				panic(err3)
 			}
-			for rows.Next() {
+			for res.Next() {
 				var userCard UserCard
 				err = res.Scan(&userCard.Key, &userCard.Id)
 				if err != nil {
@@ -274,8 +283,20 @@ func scam(ctx *gin.Context) {
 		ctx.String(200, user+" has already been scammed.")
 		return
 	}
+
+	var starterId = 1
+	var key int
+	err := db.QueryRow(insertUserCard, starterId).Scan(&key)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec(insertUser, user, key)
+	if err != nil {
+		panic(err)
+	}
+
 	users.Lock()
-	users.m[user] = User{user, Box{UserCards: &[]UserCard{UserCard{Key: 1, Id: 1}}, Size: 1}}
+	users.m[user] = User{user, Box{UserCards: &[]UserCard{UserCard{Key: key, Id: starterId}}, Size: 1}}
 	users.Unlock()
 	ctx.String(200, user+" has been successfully scammed.")
 }
@@ -299,7 +320,7 @@ func roll(ctx *gin.Context) {
 	// }
 	var roll Card = cards[validIds[rand.Intn(len(validIds))]]
 	var resp = user + "'s roll: " + getEggTier(roll) + " " + roll.Name
-	var newCard UserCard = UserCard{Key: rand.Intn(10000), Id: roll.Id}
+	var newCard UserCard = UserCard{Key: -1, Id: roll.Id}
 	userInfo.Box.Lock()
 	*userInfo.Box.UserCards = append((*userInfo.Box.UserCards)[0:1], newCard)
 	userInfo.Box.Unlock()
@@ -357,6 +378,22 @@ func keep(ctx *gin.Context) {
 		ctx.String(200, user+" does not have a new card to keep.")
 		return
 	}
+
+	var key int
+	err := db.QueryRow(insertUserCard, (*userInfo.Box.UserCards)[1].Id).Scan(&key)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec(updateUser, key, user)
+	if err != nil {
+		panic(err)
+	}
+	_, err = db.Exec(deleteUserCard, (*userInfo.Box.UserCards)[0].Key)
+	if err != nil {
+		panic(err)
+	}
+
+	(*userInfo.Box.UserCards)[1].Key = key
 	(*userInfo.Box.UserCards)[0] = (*userInfo.Box.UserCards)[1]
 	*userInfo.Box.UserCards = (*userInfo.Box.UserCards)[:1]
 	var resp = user + "'s new leader is: " + cards[(*userInfo.Box.UserCards)[0].Id].Name
